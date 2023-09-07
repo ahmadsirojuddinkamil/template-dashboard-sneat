@@ -1,300 +1,98 @@
-/*
+const path = require('path');
 
-REQUIRED STUFF
-==============
-*/
+// Config
+// -------------------------------------------------------------------------------
 
-var gulp        = require('gulp');
-var sass        = require('gulp-sass');
-var sourcemaps  = require('gulp-sourcemaps');
-var browsersync = require('browser-sync').create();
-var notify      = require('gulp-notify');
-var prefix      = require('gulp-autoprefixer');
-var cleancss    = require('gulp-clean-css');
-var uglify      = require('gulp-uglify-es').default;
-var concat      = require('gulp-concat');
-var util        = require('gulp-util');
-var pixrem      = require('gulp-pixrem');
-var exec        = require('child_process').exec;
-var rename      = require('gulp-rename');
-var stylefmt    = require('gulp-stylefmt');
-var debug       = require('gulp-debug');
-var scsslint    = require('gulp-scss-lint');
-var php2html    = require('gulp-php2html');
-var htmlmin     = require('gulp-htmlmin');
-var phpcs       = require('gulp-phpcs');
-var cache       = require('gulp-cached');
+const env = require('gulp-environment');
+process.env.NODE_ENV = env.current.name;
 
-/*
+let serverPath;
+const conf = (() => {
+  const _conf = require('./build-config');
+  serverPath = _conf.base.serverPath;
+  templatePath = _conf.base.buildTemplatePath;
+  buildPath = _conf.base.buildPath;
+  return require('deepmerge').all([{}, _conf.base || {}, _conf[process.env.NODE_ENV] || {}]);
+})();
 
-ERROR HANDLING
-==============
-*/
+conf.distPath = path.resolve(__dirname, conf.distPath).replace(/\\/g, '/');
 
+// Modules
+// -------------------------------------------------------------------------------
 
-var handleError = function(task) {
-  return function(err) {
+const { parallel, series, watch } = require('gulp');
+const del = require('del');
+const colors = require('ansi-colors');
+const browserSync = require('browser-sync').create();
+colors.enabled = require('color-support').hasBasic;
 
-      notify.onError({
-        message: task + ' failed, check the logs..',
-        sound: true
-      })(err);
+// Utilities
+// -------------------------------------------------------------------------------
 
-    util.log(util.colors.bgRed(task + ' error:'), util.colors.red(err));
-  };
-};
+function srcGlob(...src) {
+  return src.concat(conf.exclude.map(d => `!${d}/**/*`));
+}
 
-/*
+// Tasks
+// -------------------------------------------------------------------------------
 
-FILE PATHS
-==========
-*/
+const buildTasks = require('./tasks/build')(conf, srcGlob);
+const prodTasks = require('./tasks/prod')(conf);
 
-var imgSrc = 'src/images/*.{png,jpg,jpeg,gif}';
-var imgDest = 'dist/images';
-var sassSrc = 'src/sass/**/*.{sass,scss}';
-var sassFile = 'src/sass/base/global.scss';
-var cssDest = 'dist/css';
-var srcDir = 'src';
-var jsSrc = 'src/js/**/*.js';
-var jsDest = 'dist/js';
-var markupSrc = 'src/*.php';
-var markupDist = 'dist/*.php';
-var markupDest = 'dist';
-var htmlSrc = 'src/*.html';
+// Clean build directory
+// -------------------------------------------------------------------------------
 
-/*
-
-BROWSERSYNC
-===========
-*/
-
-gulp.task('browsersync', function() {
-
-    var files = [
-      imgDest + '/*.{png,jpg,jpeg,gif}',
-      jsSrc,
-      markupSrc,
-      markupDist
-    ];
-
-    browsersync.init(files, {
-        proxy: "modern-html5-boilerplate.test",
-        browser: null,
-        notify: true,
-        open: "external",
-        reloadDelay: 1000
-    });
-});
-
-/*
-
-STYLES
-======
-*/
-
-var stylefmtfile = function( file ) {
-
-    console.log(util.colors.white('[') + util.colors.yellow('Stylefmt') + util.colors.white('] ') + 'Automatically correcting file based on .stylelintrc...');
-    var currentdirectory = process.cwd() + '/';
-    var modifiedfile = file.path.replace( currentdirectory, '' );
-    var filename = modifiedfile.replace(/^.*[\\\/]/, '')
-    var correctdir = modifiedfile.replace( filename, '' );
-
-    gulp.src(modifiedfile)
-
-        // Cache this action to prevent watch loop
-        .pipe(cache('stylefmtrunning'))
-
-        // Run current file through stylefmt
-        .pipe(stylefmt({ configFile: '.stylelintrc' }))
-
-        // Overwrite
-        .pipe(gulp.dest(correctdir))
-};
-
-gulp.task('scss-lint', function() {
-  gulp.src([sassSrc, '!sass/navigation/_burger.scss', '!sass/base/_normalize.scss'])
-    .pipe(scsslint());
-});
-
-gulp.task('styles', function() {
-  gulp.src(sassFile)
-
-  .pipe(sass({
-    compass: false,
-    bundleExec: true,
-    sourcemap: false,
-    style: 'compressed',
-    debugInfo: true,
-    lineNumbers: true,
-    errLogToConsole: true,
-    includePaths: [
-      'node_modules/'
-    ],
-  }))
-
-  .on('error', handleError('styles'))
-  .pipe(prefix('last 3 version', 'safari 5', 'ie 9', 'opera 12.1', 'ios 6', 'android 4')) // Adds browser prefixes (eg. -webkit, -moz, etc.)
-  .pipe(pixrem())
-  .pipe(cleancss({
-    compatibility: 'ie11',
-    level: {
-      1: {
-        tidyAtRules: true,
-        cleanupCharsets: true,
-        specialComments: 0
-      }
-    }
-  }, function(details) {
-      console.log('[clean-css] Time spent on minification: ' + details.stats.timeSpent + ' ms');
-      console.log('[clean-css] Compression efficiency: ' + details.stats.efficiency * 100 + ' %');
-  }))
-  .pipe(rename({
-    suffix: '.min'
-  }))
-  .pipe(gulp.dest(cssDest))
-  .pipe(browsersync.stream());
-
-  // Save expanded version
-  gulp.src(sassFile)
-
-  .pipe(sass({
-    compass: false,
-    bundleExec: true,
-    sourcemap: false,
-    style: 'expanded',
-    debugInfo: true,
-    lineNumbers: true,
-    errLogToConsole: true,
-    includePaths: [
-      'bower_components/',
-      'node_modules/',
-      // require('node-bourbon').includePaths
-    ],
-  }))
-
-  .on('error', handleError('styles'))
-  .pipe(prefix('last 3 version', 'safari 5', 'ie 9', 'opera 12.1', 'ios 6', 'android 4')) // Adds browser prefixes (eg. -webkit, -moz, etc.)
-  .pipe(pixrem())
-
-  // Process the expanded output with Stylefmt
-  .pipe(stylefmt({ configFile: './.stylelintrc' }))
-  .pipe(gulp.dest(cssDest))
-  .pipe(browsersync.stream());
-
+const cleanTask = function () {
+  return del([conf.distPath, buildPath], {
+    force: true
   });
+};
 
-/*
+// Watch
+// -------------------------------------------------------------------------------
+const watchTask = function () {
+  watch(srcGlob('**/*.scss', '!fonts/**/*.scss'), buildTasks.css);
+  watch(srcGlob('fonts/**/*.scss'), parallel(buildTasks.css, buildTasks.fonts));
+  watch(srcGlob('**/*.@(js|es6)', '!*.js'), buildTasks.js);
+  // watch(srcGlob('**/*.png', '**/*.gif', '**/*.jpg', '**/*.jpeg', '**/*.svg', '**/*.swf'), copyTasks.copyAssets)
+};
 
-IMAGES
-======
-*/
+// Serve
+// -------------------------------------------------------------------------------
+const serveTasks = function () {
+  browserSync.init({
+    // ? You can change server path variable from build-config.js file
+    server: serverPath
+  });
+  watch([
+    // ? You can change add/remove files/folders watch paths in below array
+    'html/**/*.html',
+    'html-starter/**/*.html',
+    'assets/vendor/css/*.css',
+    'assets/vendor/css/rtl/*.css',
+    'assets/css/*.css',
+    'assets/js/*.js'
+  ]).on('change', browserSync.reload);
+};
 
-gulp.task('images', function() {
-  var dest = imgDest;
+const serveTask = parallel([serveTasks, watchTask]);
 
-  return gulp.src(imgSrc)
+// Build (Dev & Prod)
+// -------------------------------------------------------------------------------
 
-    .pipe(changed(dest)) // Ignore unchanged files
-    .pipe(cache(imagemin({ optimizationLevel: 5, progressive: true, interlaced: true }))) //use cache to only target new/changed files, then optimize the images
-    .pipe(gulp.dest(imgDest));
+const buildTask = conf.cleanDist
+  ? series(cleanTask, env.current.name === 'production' ? [buildTasks.all, prodTasks.all] : buildTasks.all)
+  : series(env.current.name === 'production' ? [buildTasks.all, prodTasks.all] : buildTasks.all);
 
-});
-
-/*
-
-SCRIPTS
-=======
-*/
-
-gulp.task('js', function() {
-
-      gulp.src(
-        [
-          'node_modules/jquery/dist/jquery.js',
-          'node_modules/what-input/dist/what-input.js',
-          'src/js/scripts.js',
-        ])
-        .pipe(concat('all.js'))
-        .pipe(uglify({
-          compress: true,
-          mangle: true}).on('error', function(err) {
-            util.log(util.colors.red('[Error]'), err.toString());
-            this.emit('end');
-        }))
-        .pipe(gulp.dest(jsDest));
-});
-
-/*
-
-PHP
-===
-*/
-
-gulp.task('php', function() {
-
-  gulp.src(markupSrc)
-
-    // Validate files using PHP Code Sniffer
-    .pipe(phpcs({
-      bin: '/usr/local/bin/phpcs',
-      standard: 'phpcs.xml',
-      warningSeverity: 0
-    }))
-
-    // Log all problems that was found
-    .pipe(phpcs.reporter('log'))
-
-    // Make dist HTML versions from php files
-    .pipe(php2html())
-    .pipe(gulp.dest(srcDir));
-
-});
-
-/*
-
-HTML
-====
-*/
-
-gulp.task('html', function() {
-
-  gulp.src(htmlSrc)
-
-    // Minify HTML
-    .pipe(htmlmin({ collapseWhitespace: true }))
-    .pipe(gulp.dest(markupDest));
-
-});
-
-/*
-
-WATCH
-=====
-
-Notes:
-   - browsersync automatically reloads any files
-     that change within the directory it's serving from
-*/
-
-// Run the JS task followed by a reload
-gulp.task('js-watch', ['js'], browsersync.reload);
-
-gulp.task('watch', ['browsersync'], function() {
-
-  gulp.watch(sassSrc, ['styles', 'scss-lint']).on( 'change', stylefmtfile );
-  gulp.watch(jsSrc, ['js-watch']);
-  gulp.watch(markupSrc, ['php']);
-  gulp.watch(htmlSrc, ['html']);
-
-});
-
-/*
-
-DEFAULT
-=====
-
-*/
-
-gulp.task('default', ['watch']);
+// Exports
+// -------------------------------------------------------------------------------
+module.exports = {
+  default: buildTask,
+  build: buildTask,
+  'build:js': buildTasks.js,
+  'build:css': buildTasks.css,
+  'build:fonts': buildTasks.fonts,
+  'build:copy': parallel([buildTasks.copy]),
+  watch: watchTask,
+  serve: serveTask
+};
